@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -14,6 +15,7 @@ import ratemycourse.entity.Course;
 import ratemycourse.usecase.search.CatalogueException;
 import ratemycourse.usecase.search.SearchCourses;
 import ratemycourse.usecase.search.SearchRequest;
+import ratemycourse.usecase.search.SearchResponse;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -28,8 +30,9 @@ class TsvCourseCatalogueTest {
     void loadsBundledDemoThroughSearchBoundary() {
         TsvCourseCatalogue adapter = new TsvCourseCatalogue(
                 () -> getClass().getResourceAsStream("/demo-courses.tsv"));
-        assertEquals("CSC207H1", new SearchCourses(adapter).execute(
-                new SearchRequest("csc 207", "", 0)).getCourses().get(0).getCode());
+        AtomicReference<SearchResponse> output = new AtomicReference<>();
+        new SearchCourses(adapter, output::set).execute(new SearchRequest("csc 207", "", 0));
+        assertEquals("CSC207H1", output.get().getCourses().get(0).getCode());
     }
 
     @Test
@@ -75,13 +78,17 @@ class TsvCourseCatalogueTest {
         Path file = directory.resolve("courses.tsv");
         byte[] original = (HEADER + ROW).getBytes(StandardCharsets.UTF_8);
         Files.write(file, original);
-        SearchCourses search = new SearchCourses(new TsvCourseCatalogue(() -> Files.newInputStream(file)));
-        assertTrue(search.execute(new SearchRequest("CSC207", "", 0)).isSuccess());
+        AtomicReference<SearchResponse> output = new AtomicReference<>();
+        SearchCourses search = new SearchCourses(new TsvCourseCatalogue(() -> Files.newInputStream(file)), output::set);
+        search.execute(new SearchRequest("CSC207", "", 0));
+        assertTrue(output.get().isSuccess());
         assertArrayEquals(original, Files.readAllBytes(file));
         Files.delete(file);
-        assertTrue(!search.execute(new SearchRequest("", "", 0)).isSuccess());
+        search.execute(new SearchRequest("", "", 0));
+        assertTrue(!output.get().isSuccess());
         Files.write(file, original);
-        assertEquals(1, search.execute(new SearchRequest("", "", 0)).getCourses().size());
+        search.execute(new SearchRequest("", "", 0));
+        assertEquals(1, output.get().getCourses().size());
     }
 
     private TsvCourseCatalogue adapter(String data) {

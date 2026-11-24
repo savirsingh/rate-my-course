@@ -9,14 +9,17 @@ import ratemycourse.entity.Course;
 /** UC1 search rules. No UI, file, network, or write operations belong here. */
 public final class SearchCourses implements SearchInputBoundary {
     private final CourseCatalogue catalogue;
+    private final SearchOutputBoundary presenter;
 
-    public SearchCourses(CourseCatalogue catalogue) {
+    public SearchCourses(CourseCatalogue catalogue, SearchOutputBoundary presenter) {
         this.catalogue = Objects.requireNonNull(catalogue);
+        this.presenter = Objects.requireNonNull(presenter);
     }
 
     @Override
-    public SearchResponse execute(SearchRequest request) {
+    public void execute(SearchRequest request) {
         Objects.requireNonNull(request);
+        SearchResponse response;
         try {
             List<Course> courses = catalogue.loadCourses();
             List<String> departments = courses.stream().map(Course::getDepartment)
@@ -25,11 +28,12 @@ public final class SearchCourses implements SearchInputBoundary {
                     .filter(course -> matches(course, request))
                     .sorted(Comparator.comparing(Course::getCode))
                     .map(CourseData::new).collect(Collectors.toList());
-            return SearchResponse.success(matches, departments);
+            response = SearchResponse.success(matches, departments);
         }
         catch (CatalogueException exception) {
-            return SearchResponse.failure();
+            response = SearchResponse.failure();
         }
+        presenter.present(response);
     }
 
     private boolean matches(Course course, SearchRequest request) {

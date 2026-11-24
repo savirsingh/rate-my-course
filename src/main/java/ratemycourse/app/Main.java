@@ -6,6 +6,8 @@ import java.nio.file.Path;
 import javax.swing.SwingUtilities;
 import ratemycourse.dataaccess.HttpCourseCatalogue;
 import ratemycourse.dataaccess.TsvCourseCatalogue;
+import ratemycourse.interfaceadapter.search.SearchPresenter;
+import ratemycourse.interfaceadapter.search.SearchViewModel;
 import ratemycourse.usecase.search.CourseCatalogue;
 import ratemycourse.usecase.search.SearchCourses;
 import ratemycourse.view.CourseBrowser;
@@ -32,8 +34,9 @@ public final class Main {
             catalogue = new HttpCourseCatalogue(api);
             label = "Unofficial UofT API — Arts & Science 2026–2027; department/subject derived from code prefix";
         }
-        SearchCourses searchCourses = new SearchCourses(catalogue);
+        SearchViewModel viewModel = new SearchViewModel();
+        SearchCourses searchCourses = new SearchCourses(catalogue, new SearchPresenter(viewModel));
         String catalogueLabel = label;
-        SwingUtilities.invokeLater(() -> new CourseBrowser(searchCourses, catalogueLabel).setVisible(true));
+        SwingUtilities.invokeLater(() -> new CourseBrowser(searchCourses, viewModel, catalogueLabel).setVisible(true));
     }
 }

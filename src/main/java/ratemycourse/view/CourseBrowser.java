@@ -18,6 +18,7 @@ import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
 import javax.swing.SwingWorker;
+import ratemycourse.interfaceadapter.search.SearchViewModel;
 import ratemycourse.usecase.search.CourseData;
 import ratemycourse.usecase.search.SearchInputBoundary;
 import ratemycourse.usecase.search.SearchRequest;
@@ -26,6 +27,7 @@ import ratemycourse.usecase.search.SearchResponse;
 /** Thin Swing adapter: collect input, call the boundary off the UI thread, render output. */
 public final class CourseBrowser extends JFrame {
     private final SearchInputBoundary searchCourses;
+    private final SearchViewModel viewModel;
     private final JTextField query = new JTextField(20);
     private final JComboBox<String> department = new JComboBox<>(new String[]{"All departments"});
     private final JComboBox<String> year = new JComboBox<>(new String[]{"All years", "1", "2", "3", "4"});
@@ -37,13 +39,14 @@ public final class CourseBrowser extends JFrame {
     private final JTextArea details = new JTextArea();
     private List<CourseData> displayedCourses = List.of();
 
-    public CourseBrowser(SearchInputBoundary searchCourses) {
-        this(searchCourses, "Demo catalogue — illustrative metadata, not a live UTSG feed");
+    public CourseBrowser(SearchInputBoundary searchCourses, SearchViewModel viewModel) {
+        this(searchCourses, viewModel, "Demo catalogue — illustrative metadata, not a live UTSG feed");
     }
 
-    public CourseBrowser(SearchInputBoundary searchCourses, String catalogueLabel) {
+    public CourseBrowser(SearchInputBoundary searchCourses, SearchViewModel viewModel, String catalogueLabel) {
         super("Rate My Course — UC1 search preview");
         this.searchCourses = searchCourses;
+        this.viewModel = viewModel;
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         setSize(1050, 550);
         setLocationRelativeTo(null);
@@ -102,10 +105,11 @@ public final class CourseBrowser extends JFrame {
         displayedCourses = List.of();
         listModel.clear();
         details.setText("");
-        new SwingWorker<SearchResponse, Void>() {
+        new SwingWorker<Void, Void>() {
             @Override
-            protected SearchResponse doInBackground() {
-                return searchCourses.execute(request);
+            protected Void doInBackground() {
+                searchCourses.execute(request);
+                return null;
             }
 
             @Override
@@ -115,7 +119,8 @@ public final class CourseBrowser extends JFrame {
                 }
                 setBusy(false);
                 try {
-                    render(get());
+                    get();
+                    render(viewModel.getResponse());
                 }
                 catch (InterruptedException exception) {
                     Thread.currentThread().interrupt();

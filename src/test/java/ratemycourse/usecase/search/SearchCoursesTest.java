@@ -19,18 +19,20 @@ class SearchCoursesTest {
             "Computer Science", 1, "Programming");
     private final Course algebra = new Course("MAT223H1", "Linear Algebra I", "Mathematics", 2, "Algebra");
     private final List<Course> catalogue = List.of(algebra, design, programming);
-    private final SearchCourses search = new SearchCourses(() -> catalogue);
+    private final List<SearchResponse> presented = new ArrayList<>();
+    private final SearchCourses search = new SearchCourses(() -> catalogue, presented::add);
 
     @Test
     void normalizesCaseWhitespaceAndSpacedCourseCodes() {
-        assertEquals(List.of("CSC207H1"), codes(search.execute(new SearchRequest("  cSc  207  ", "", 0))));
-        assertEquals(List.of("CSC207H1"), codes(search.execute(new SearchRequest("  SOFTWARE   design ", "", 0))));
-        assertEquals(List.of("CSC207H1"), codes(search.execute(new SearchRequest("ware des", "", 0))));
+        assertEquals(List.of("CSC207H1"), codes(executeAndCapture(search, new SearchRequest("  cSc  207  ", "", 0))));
+        assertEquals(List.of("CSC207H1"), codes(executeAndCapture(search,
+                new SearchRequest("  SOFTWARE   design ", "", 0))));
+        assertEquals(List.of("CSC207H1"), codes(executeAndCapture(search, new SearchRequest("ware des", "", 0))));
     }
 
     @Test
     void emptyQueryBrowsesWholeCatalogueInCodeOrder() {
-        SearchResponse response = search.execute(new SearchRequest(" \t ", "", 0));
+        SearchResponse response = executeAndCapture(search, new SearchRequest(" \t ", "", 0));
         assertTrue(response.isSuccess());
         assertEquals(List.of("CSC108H1", "CSC207H1", "MAT223H1"), codes(response));
         assertEquals(List.of("Computer Science", "Mathematics"), response.getDepartments());
@@ -38,27 +40,29 @@ class SearchCoursesTest {
 
     @Test
     void combinesTextDepartmentAndYearWithAnd() {
-        assertEquals(List.of("CSC207H1"), codes(search.execute(
+        assertEquals(List.of("CSC207H1"), codes(executeAndCapture(search,
                 new SearchRequest("csc", " computer SCIENCE ", 2))));
-        assertTrue(search.execute(new SearchRequest("CSC207", "Mathematics", 2)).getCourses().isEmpty());
-        assertTrue(search.execute(new SearchRequest("CSC207", "Computer Science", 1)).getCourses().isEmpty());
+        assertTrue(executeAndCapture(search, new SearchRequest("CSC207", "Mathematics", 2)).getCourses().isEmpty());
+        assertTrue(executeAndCapture(search,
+                new SearchRequest("CSC207", "Computer Science", 1)).getCourses().isEmpty());
     }
 
     @Test
     void emptyQueryStillAppliesEachFilter() {
-        assertEquals(List.of("CSC108H1", "CSC207H1"), codes(search.execute(
+        assertEquals(List.of("CSC108H1", "CSC207H1"), codes(executeAndCapture(search,
                 new SearchRequest("", "Computer Science", 0))));
-        assertEquals(List.of("CSC207H1", "MAT223H1"), codes(search.execute(new SearchRequest("", "", 2))));
-        assertEquals(List.of("MAT223H1"), codes(search.execute(new SearchRequest("", "Mathematics", 2))));
+        assertEquals(List.of("CSC207H1", "MAT223H1"), codes(executeAndCapture(search, new SearchRequest("", "", 2))));
+        assertEquals(List.of("MAT223H1"), codes(executeAndCapture(search, new SearchRequest("", "Mathematics", 2))));
     }
 
     @Test
     void noMatchAndEmptyCatalogueAreSuccessfulOutcomes() {
-        SearchResponse noMatch = search.execute(new SearchRequest("nonexistent", "", 0));
+        SearchResponse noMatch = executeAndCapture(search, new SearchRequest("nonexistent", "", 0));
         assertTrue(noMatch.isSuccess());
         assertTrue(noMatch.getCourses().isEmpty());
         assertTrue(noMatch.getError().isEmpty());
-        SearchResponse empty = new SearchCourses(List::of).execute(new SearchRequest("", "", 0));
+        SearchResponse empty = executeAndCapture(new SearchCourses(List::of, presented::add),
+                new SearchRequest("", "", 0));
         assertTrue(empty.isSuccess());
         assertTrue(empty.getCourses().isEmpty());
     }
@@ -71,20 +75,21 @@ class SearchCoursesTest {
                 throw new CatalogueException("Offline", new java.io.IOException("Offline"));
             }
             return catalogue;
-        });
+        }, presented::add);
         SearchRequest request = new SearchRequest("CSC207", "", 0);
-        SearchResponse failed = recoveringSearch.execute(request);
+        SearchResponse failed = executeAndCapture(recoveringSearch, request);
         assertFalse(failed.isSuccess());
         assertFalse(failed.getError().isBlank());
-        SearchResponse retried = recoveringSearch.execute(request);
+        SearchResponse retried = executeAndCapture(recoveringSearch, request);
         assertTrue(retried.isSuccess());
         assertEquals(List.of("CSC207H1"), codes(retried));
     }
 
     @Test
-    void returnsMetadataWithoutChangingSourceOrExposingMutableResults() {
+    void presentsMetadataWithoutChangingSourceOrExposingMutableResults() {
         List<Course> source = new ArrayList<>(catalogue);
-        SearchResponse response = new SearchCourses(() -> source).execute(new SearchRequest("CSC207", "", 0));
+        SearchResponse response = executeAndCapture(new SearchCourses(() -> source, presented::add),
+                new SearchRequest("CSC207", "", 0));
         CourseData selected = response.getCourses().get(0);
         assertEquals("Software Design", selected.getName());
         assertEquals("Computer Science", selected.getDepartment());
@@ -102,7 +107,7 @@ class SearchCoursesTest {
         Locale previous = Locale.getDefault();
         try {
             Locale.setDefault(Locale.forLanguageTag("tr-TR"));
-            assertEquals(List.of("CSC207H1"), codes(search.execute(new SearchRequest("DESIGN", "", 0))));
+            assertEquals(List.of("CSC207H1"), codes(executeAndCapture(search, new SearchRequest("DESIGN", "", 0))));
         }
         finally {
             Locale.setDefault(previous);
@@ -113,6 +118,13 @@ class SearchCoursesTest {
     void rejectsInvalidYearFilters() {
         assertThrows(IllegalArgumentException.class, () -> new SearchRequest("", "", 5));
         assertThrows(IllegalArgumentException.class, () -> new SearchRequest("", "", -1));
+    }
+
+    private SearchResponse executeAndCapture(SearchInputBoundary input, SearchRequest request) {
+        int previousOutputs = presented.size();
+        input.execute(request);
+        assertEquals(previousOutputs + 1, presented.size(), "Each request must present exactly one response");
+        return presented.get(previousOutputs);
     }
 
     private List<String> codes(SearchResponse response) {
