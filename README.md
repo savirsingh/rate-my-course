@@ -36,8 +36,6 @@ The default API base is `http://127.0.0.1:8000/`. To use another running instanc
 mvn compile exec:java -Dcatalogue.api=http://127.0.0.1:8765/
 ```
 
-![API search and metadata preview](docs/uc1-browser.png)
-
 ## API scope and mappings
 
 This increment loads **Arts & Science** records using
@@ -99,14 +97,11 @@ complete detail screen. Searching performs no writes to catalogue storage.
 
 ## Validation and demo
 
-`mvn --batch-mode verify` runs 46 JUnit cases and Checkstyle. GitHub Actions runs
-the same command on push/PR. HTTP tests use a loopback server and need no external
-network or Python process. A local integration smoke also loaded the full public
+`mvn --batch-mode verify` runs 46 JUnit cases and Checkstyle. HTTP tests use a
+loopback server and need no external network or Python process. A local integration smoke also loaded the full public
 Arts & Science catalogue through the actual Python API and exercised the browser.
 
 To demonstrate API failure/recovery, start the Java app while its configured API
 is stopped. Observe an error, start the API, then press Retry. After a successful
 load the application uses its cache, so stopping the server then does not make
 subsequent local searches fail.
-
-See [architecture, UC1 coverage, rubric mapping, and demo](docs/uc1-search.md).
