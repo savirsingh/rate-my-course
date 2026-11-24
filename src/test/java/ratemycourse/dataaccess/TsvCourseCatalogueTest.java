@@ -12,7 +12,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import ratemycourse.entity.Course;
-import ratemycourse.usecase.search.CatalogueException;
+import ratemycourse.usecase.gateway.DataAccessException;
 import ratemycourse.usecase.search.SearchCourses;
 import ratemycourse.usecase.search.SearchRequest;
 import ratemycourse.usecase.search.SearchResponse;
@@ -23,8 +23,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TsvCourseCatalogueTest {
-    private static final String HEADER = "code\tname\tdepartment\tyear\tdescription\n";
-    private static final String ROW = "CSC207H1\tSoftware Design\tComputer Science\t2\tDesign\n";
+    private static final String HEADER = "code\tname\tfaculty\tcredits\tsource_url\n";
+    private static final String ROW = "CSC207H1\tSoftware Design\tArts & Science\t\t\n";
 
     @Test
     void loadsBundledDemoThroughSearchBoundary() {
@@ -36,39 +36,39 @@ class TsvCourseCatalogueTest {
     }
 
     @Test
-    void readsUtf8AndReturnsImmutableCatalogue() throws CatalogueException {
+    void readsUtf8AndReturnsImmutableCatalogue() throws DataAccessException {
         List<Course> courses = adapter(HEADER + ROW.replace("Design", "Désign")).loadCourses();
-        assertEquals("Software Désign", courses.get(0).getName());
+        assertEquals("Software Désign", courses.get(0).title);
         assertThrows(UnsupportedOperationException.class, courses::clear);
     }
 
     @Test
-    void headerOnlyCatalogueIsAValidEmptyCatalogue() throws CatalogueException {
+    void headerOnlyCatalogueIsAValidEmptyCatalogue() throws DataAccessException {
         assertTrue(adapter(HEADER).loadCourses().isEmpty());
     }
 
     @ParameterizedTest
     @ValueSource(strings = {
-        "", "incorrect header\n", "code\tname\tdepartment\tyear\tdescription\ninvalid row",
-        "code\tname\tdepartment\tyear\tdescription\nCSC207\tDesign\tCS\tnot-a-year\tDesign",
-        "code\tname\tdepartment\tyear\tdescription\nCSC207\tDesign\tCS\t5\tDesign",
-        "code\tname\tdepartment\tyear\tdescription\nCSC207\t\tCS\t2\tDesign"
+        "", "incorrect header\n", "code\tname\tfaculty\tcredits\tsource_url\ninvalid row",
+        "code\tname\tfaculty\tcredits\tsource_url\nCSC207H1\tDesign\tArts & Science\tnot-a-credit\t",
+        "code\tname\tfaculty\tcredits\tsource_url\nBAD-CODE\tDesign\tArts & Science\t0.5\t",
+        "code\tname\tfaculty\tcredits\tsource_url\nCSC207H1\t\tArts & Science\t0.5\t"
     })
     void malformedDataFailsRatherThanAppearingEmpty(String data) {
-        assertThrows(CatalogueException.class, () -> adapter(data).loadCourses());
+        assertThrows(DataAccessException.class, () -> adapter(data).loadCourses());
     }
 
     @Test
     void rejectsDuplicateCodesAndPartiallyValidCatalogues() {
-        assertThrows(CatalogueException.class,
+        assertThrows(DataAccessException.class,
                 () -> adapter(HEADER + ROW + ROW.toLowerCase(java.util.Locale.ROOT)).loadCourses());
-        assertThrows(CatalogueException.class, () -> adapter(HEADER + ROW + "broken row").loadCourses());
+        assertThrows(DataAccessException.class, () -> adapter(HEADER + ROW + "broken row").loadCourses());
     }
 
     @Test
     void missingAndUnreadableSourcesAreFailures() {
-        assertThrows(CatalogueException.class, () -> new TsvCourseCatalogue(() -> null).loadCourses());
-        assertThrows(CatalogueException.class, () -> new TsvCourseCatalogue(() -> {
+        assertThrows(DataAccessException.class, () -> new TsvCourseCatalogue(() -> null).loadCourses());
+        assertThrows(DataAccessException.class, () -> new TsvCourseCatalogue(() -> {
             throw new IOException("Unavailable");
         }).loadCourses());
     }

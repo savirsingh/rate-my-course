@@ -24,11 +24,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import ratemycourse.entity.Course;
-import ratemycourse.usecase.search.CatalogueException;
+import ratemycourse.usecase.gateway.DataAccessException;
+import ratemycourse.usecase.gateway.CourseSearchPage;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -47,7 +47,7 @@ class HttpCourseCatalogueTest {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         executor = Executors.newCachedThreadPool();
         server.setExecutor(executor);
-        server.createContext("/api/courses", exchange -> {
+        server.createContext("/courses", exchange -> {
             String query = exchange.getRequestURI().getQuery();
             requests.add(query);
             if (delay) {
@@ -69,7 +69,7 @@ class HttpCourseCatalogueTest {
             }
         });
         server.start();
-        base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/api");
+        base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/");
     }
 
     @AfterEach
@@ -80,69 +80,70 @@ class HttpCourseCatalogueTest {
     }
 
     @Test
-    void loadsAllPagesBeforePublishingAndReusesImmutableSnapshot() throws CatalogueException {
+    void loadsOnlyTheRequestedPageAndKeepsSharedMetadata() throws DataAccessException {
         List<JsonObject> firstPage = new ArrayList<>();
         for (int number = 100; number < 200; number++) {
             firstPage.add(record("CSC" + number + "H1"));
         }
-        response = query -> query.endsWith("page=1") ? page(101, 1, firstPage)
+        response = query -> query.contains("page=1&") ? page(101, 1, firstPage)
                 : page(101, 2, List.of(record("CSC207H1")));
-        HttpCourseCatalogue adapter = new HttpCourseCatalogue(base);
-        List<Course> courses = adapter.loadCourses();
-        assertEquals(101, courses.size());
-        Course selected = courses.get(100);
-        assertEquals("CSC207H1", selected.getCode());
-        assertEquals("Software Design", selected.getName());
-        assertEquals("CSC", selected.getDepartment());
-        assertEquals(2, selected.getYear());
-        assertEquals("https://artsci.calendar.utoronto.ca/course/csc207h1", selected.getSourceUrl());
-        assertTrue(selected.getDescription().contains("Description not supplied"));
-        assertSame(courses, adapter.loadCourses());
-        assertThrows(UnsupportedOperationException.class, courses::clear);
-        assertEquals(List.of("faculty=artsci&page_size=100&page=1", "faculty=artsci&page_size=100&page=2"), requests);
-    }
-
-    @Test
-    void preservesNonemptyDescriptions() throws CatalogueException {
-        JsonObject record = record("CSC207H1");
-        record.addProperty("description", "Actual description from a configured snapshot");
-        response = query -> page(1, 1, List.of(record));
-        assertTrue(new HttpCourseCatalogue(base).loadCourses().get(0).getDescription()
-                .startsWith("Actual description"));
-    }
-
-    @Test
-    void acceptsAndCachesAnExplicitEmptyCatalogue() throws CatalogueException {
-        response = query -> page(0, 1, List.of());
-        HttpCourseCatalogue adapter = new HttpCourseCatalogue(base);
-        assertTrue(adapter.loadCourses().isEmpty());
-        assertTrue(adapter.loadCourses().isEmpty());
+        HttpCourseCatalog adapter = new HttpCourseCatalog(base);
+        CourseSearchPage first = adapter.search("", 1, 100);
+        assertEquals(101, first.total);
+        assertEquals(100, first.courses.size());
         assertEquals(1, requests.size());
+        Course selected = adapter.search("", 2, 100).courses.get(0);
+        assertEquals("CSC207H1", selected.code);
+        assertEquals("Software Design", selected.title);
+        assertTrue(selected.credits.isEmpty());
+        assertEquals(List.of("https://artsci.calendar.utoronto.ca/course/csc207h1"), selected.calendarLinks);
+        assertThrows(UnsupportedOperationException.class, first.courses::clear);
+        assertEquals(List.of("q=&page=1&page_size=100", "q=&page=2&page_size=100"), requests);
     }
 
     @Test
-    void failedLaterPageDoesNotCachePartialResultsAndRetryStartsFromPageOne() throws CatalogueException {
+    void missingDescriptionsDoNotInvalidateSharedMetadata() throws DataAccessException {
+        JsonObject record = record("CSC207H1");
+        record.remove("description");
+        record.addProperty("credits", 0.5);
+        response = query -> page(1, 1, List.of(record));
+        Course course = new HttpCourseCatalog(base).search("", 1, 100).courses.get(0);
+        assertEquals("0.5", course.credits.orElseThrow().toPlainString());
+    }
+
+    @Test
+    void acceptsAnExplicitEmptySearchPage() throws DataAccessException {
+        response = query -> page(0, 1, List.of());
+        HttpCourseCatalog adapter = new HttpCourseCatalog(base);
+        assertTrue(adapter.search("", 1, 100).courses.isEmpty());
+        assertTrue(adapter.search("", 1, 100).courses.isEmpty());
+        assertEquals(2, requests.size());
+    }
+
+    @Test
+    void failedPageCanBeRetriedWithoutPublishingPartialData() throws DataAccessException {
         List<JsonObject> firstPage = new ArrayList<>();
         for (int number = 100; number < 200; number++) {
             firstPage.add(record("CSC" + number + "H1"));
         }
-        response = query -> query.endsWith("page=1") ? page(101, 1, firstPage) : "broken";
-        HttpCourseCatalogue adapter = new HttpCourseCatalogue(base);
-        assertThrows(CatalogueException.class, adapter::loadCourses);
+        response = query -> query.contains("page=1&") ? page(101, 1, firstPage) : "broken";
+        HttpCourseCatalog adapter = new HttpCourseCatalog(base);
+        assertEquals(100, adapter.search("", 1, 100).courses.size());
+        assertThrows(DataAccessException.class, () -> adapter.search("", 2, 100));
         response = query -> page(1, 1, List.of(record("CSC207H1")));
-        assertEquals(1, adapter.loadCourses().size());
+        assertEquals(1, adapter.search("", 1, 100).courses.size());
         assertEquals(3, requests.size());
-        assertTrue(requests.get(2).endsWith("page=1"));
+        assertTrue(requests.get(2).contains("page=1&"));
     }
 
     @ParameterizedTest
     @ValueSource(ints = {404, 422, 500, 503})
-    void treatsHttpErrorsAsFailuresAndCanRetry(int code) throws CatalogueException {
-        HttpCourseCatalogue adapter = new HttpCourseCatalogue(base);
+    void treatsHttpErrorsAsFailuresAndCanRetry(int code) throws DataAccessException {
+        HttpCourseCatalog adapter = new HttpCourseCatalog(base);
         status.set(code);
-        assertThrows(CatalogueException.class, adapter::loadCourses);
+        assertThrows(DataAccessException.class, () -> adapter.search("", 1, 100));
         status.set(200);
-        assertEquals(1, adapter.loadCourses().size());
+        assertEquals(1, adapter.search("", 1, 100).courses.size());
     }
 
     @ParameterizedTest
@@ -154,45 +155,50 @@ class HttpCourseCatalogueTest {
         "{\"total\":\"0\",\"page\":1,\"page_size\":100,\"courses\":[]}"})
     void rejectsMalformedOrInconsistentResponses(String body) {
         response = query -> body;
-        assertThrows(CatalogueException.class, () -> new HttpCourseCatalogue(base).loadCourses());
+        assertThrows(DataAccessException.class, () -> new HttpCourseCatalog(base).search("", 1, 100));
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"code", "title", "description", "source_url", "faculties"})
-    void missingConsumedFieldsAreFailures(String field) {
+    void codeIsRequiredAndMissingOptionalFieldsRemainValid(String field) throws DataAccessException {
         JsonObject record = record("CSC207H1");
         record.remove(field);
         response = query -> page(1, 1, List.of(record));
-        assertThrows(CatalogueException.class, () -> new HttpCourseCatalogue(base).loadCourses());
+        if (field.equals("code")) {
+            assertThrows(DataAccessException.class, () -> new HttpCourseCatalog(base).search("", 1, 100));
+        }
+        else {
+            assertEquals(1, new HttpCourseCatalog(base).search("", 1, 100).courses.size());
+        }
     }
 
     @Test
-    void rejectsOutOfScopeAndDuplicateRecords() {
+    void supportsOtherFacultiesButRejectsInvalidAndDuplicateCodes() throws DataAccessException {
         JsonObject record = record("CSC207H1");
         record.add("faculties", new JsonArray());
         response = query -> page(1, 1, List.of(record));
-        assertThrows(CatalogueException.class, () -> new HttpCourseCatalogue(base).loadCourses());
+        assertEquals(1, new HttpCourseCatalog(base).search("", 1, 100).courses.size());
         response = query -> page(1, 1, List.of(record("BAD-CODE")));
-        assertThrows(CatalogueException.class, () -> new HttpCourseCatalogue(base).loadCourses());
+        assertThrows(DataAccessException.class, () -> new HttpCourseCatalog(base).search("", 1, 100));
         response = query -> page(2, 1, List.of(record("CSC207H1"), record("CSC207H1")));
-        assertThrows(CatalogueException.class, () -> new HttpCourseCatalogue(base).loadCourses());
+        assertThrows(DataAccessException.class, () -> new HttpCourseCatalog(base).search("", 1, 100));
     }
 
     @Test
     void boundsRequestDuration() {
         delay = true;
-        HttpCourseCatalogue adapter = new HttpCourseCatalogue(HttpClient.newHttpClient(), base,
+        HttpCourseCatalog adapter = new HttpCourseCatalog(base, HttpClient.newHttpClient(),
                 Duration.ofMillis(300));
-        CatalogueException exception = assertThrows(CatalogueException.class, adapter::loadCourses);
+        DataAccessException exception = assertThrows(DataAccessException.class, () -> adapter.search("", 1, 100));
         assertTrue(exception.getCause() instanceof HttpTimeoutException);
     }
 
     @Test
     void preservesInterruptedFlag() {
-        HttpCourseCatalogue adapter = new HttpCourseCatalogue(base);
+        HttpCourseCatalog adapter = new HttpCourseCatalog(base);
         try {
             Thread.currentThread().interrupt();
-            assertThrows(CatalogueException.class, adapter::loadCourses);
+            assertThrows(DataAccessException.class, () -> adapter.search("", 1, 100));
             assertTrue(Thread.currentThread().isInterrupted());
         }
         finally {

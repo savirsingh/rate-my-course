@@ -1,44 +1,22 @@
 package ratemycourse.entity;
 
-import java.util.Objects;
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.Optional;
 
-/** Immutable catalogue metadata. Searching cannot change stored courses. */
+/** Catalog metadata. Missing text is empty, and a missing credit value stays absent. */
 public final class Course {
-    private final String code;
-    private final String name;
-    private final String department;
-    private final int year;
-    private final String description;
-    private final String sourceUrl;
+    public final String code;
+    public final String title;
+    public final String faculty;
+    public final Optional<BigDecimal> credits;
+    public final List<String> calendarLinks;
 
-    public Course(String code, String name, String department, int year, String description) {
-        this(code, name, department, year, description, "");
+    public Course(String code, String title, String faculty, BigDecimal credits, List<String> calendarLinks) {
+        this.code = code;
+        this.title = title;
+        this.faculty = faculty;
+        this.credits = Optional.ofNullable(credits);
+        this.calendarLinks = List.copyOf(calendarLinks);
     }
-
-    public Course(String code, String name, String department, int year, String description, String sourceUrl) {
-        this.code = requireText(code);
-        this.name = requireText(name);
-        this.department = requireText(department);
-        if (year < 1 || year > 4) {
-            throw new IllegalArgumentException("Year must be between 1 and 4");
-        }
-        this.year = year;
-        this.description = requireText(description);
-        this.sourceUrl = Objects.requireNonNull(sourceUrl).strip();
-    }
-
-    private static String requireText(String value) {
-        String text = Objects.requireNonNull(value).strip();
-        if (text.isEmpty()) {
-            throw new IllegalArgumentException("Course fields cannot be blank");
-        }
-        return text;
-    }
-
-    public String getCode() { return code; }
-    public String getName() { return name; }
-    public String getDepartment() { return department; }
-    public int getYear() { return year; }
-    public String getDescription() { return description; }
-    public String getSourceUrl() { return sourceUrl; }
 }

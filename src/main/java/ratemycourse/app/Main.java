@@ -4,39 +4,41 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import javax.swing.SwingUtilities;
-import ratemycourse.dataaccess.HttpCourseCatalogue;
+import ratemycourse.dataaccess.HttpCourseCatalog;
 import ratemycourse.dataaccess.TsvCourseCatalogue;
+import ratemycourse.interfaceadapter.search.SearchController;
 import ratemycourse.interfaceadapter.search.SearchPresenter;
 import ratemycourse.interfaceadapter.search.SearchViewModel;
-import ratemycourse.usecase.search.CourseCatalogue;
+import ratemycourse.usecase.gateway.CourseSearchCatalog;
 import ratemycourse.usecase.search.SearchCourses;
 import ratemycourse.view.CourseBrowser;
 
-/** Composition root: only this layer knows the concrete UI and data adapter. */
+/** UC1 composition root; UC3's CompareCoursesMain remains independently runnable. */
 public final class Main {
     private Main() {
     }
 
     public static void main(String[] args) {
-        String cataloguePath = System.getProperty("catalogue.path");
-        CourseCatalogue catalogue;
+        CourseSearchCatalog catalog;
         String label;
-        if (cataloguePath != null) {
-            catalogue = new TsvCourseCatalogue(() -> Files.newInputStream(Path.of(cataloguePath)));
-            label = "Local TSV catalogue";
+        String path = System.getProperty("catalogue.path");
+        if (path != null) {
+            catalog = new TsvCourseCatalogue(() -> Files.newInputStream(Path.of(path)));
+            label = "Explicit local TSV catalog";
         }
         else if ("demo".equals(System.getProperty("catalogue.mode"))) {
-            catalogue = new TsvCourseCatalogue(() -> Main.class.getResourceAsStream("/demo-courses.tsv"));
-            label = "Demo catalogue — illustrative metadata, not a live UTSG feed";
+            catalog = new TsvCourseCatalogue(() -> Main.class.getResourceAsStream("/demo-courses.tsv"));
+            label = "Explicit offline demo — eight illustrative records";
         }
         else {
-            URI api = URI.create(System.getProperty("catalogue.api", "http://127.0.0.1:8000/"));
-            catalogue = new HttpCourseCatalogue(api);
-            label = "Unofficial UofT API — Arts & Science 2026–2027; department/subject derived from code prefix";
+            String base = System.getProperty("catalogue.api");
+            catalog = base == null ? new HttpCourseCatalog() : new HttpCourseCatalog(URI.create(base));
+            label = "Deployed UofT API — all eight faculties; subject/level derived from course codes";
         }
         SearchViewModel viewModel = new SearchViewModel();
-        SearchCourses searchCourses = new SearchCourses(catalogue, new SearchPresenter(viewModel));
-        String catalogueLabel = label;
-        SwingUtilities.invokeLater(() -> new CourseBrowser(searchCourses, viewModel, catalogueLabel).setVisible(true));
+        SearchCourses interactor = new SearchCourses(catalog, new SearchPresenter(viewModel));
+        SearchController controller = new SearchController(interactor);
+        String sourceLabel = label;
+        SwingUtilities.invokeLater(() -> new CourseBrowser(controller, viewModel, sourceLabel).setVisible(true));
     }
 }

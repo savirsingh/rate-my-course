@@ -18,42 +18,38 @@ import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
 import javax.swing.SwingWorker;
+import ratemycourse.interfaceadapter.search.SearchController;
 import ratemycourse.interfaceadapter.search.SearchViewModel;
-import ratemycourse.usecase.search.CourseData;
-import ratemycourse.usecase.search.SearchInputBoundary;
-import ratemycourse.usecase.search.SearchRequest;
-import ratemycourse.usecase.search.SearchResponse;
 
-/** Thin Swing adapter: collect input, call the boundary off the UI thread, render output. */
+/** Swing adapter: invokes the controller in a worker and renders presenter-owned display state. */
 public final class CourseBrowser extends JFrame {
-    private final SearchInputBoundary searchCourses;
+    private final SearchController controller;
     private final SearchViewModel viewModel;
-    private final JTextField query = new JTextField(20);
-    private final JComboBox<String> department = new JComboBox<>(new String[]{"All departments"});
-    private final JComboBox<String> year = new JComboBox<>(new String[]{"All years", "1", "2", "3", "4"});
+    private final JTextField query = new JTextField(16);
+    private final JTextField subject = new JTextField(5);
+    private final JComboBox<String> year = new JComboBox<>(new String[]{"All levels", "1", "2", "3", "4"});
     private final JButton search = new JButton("Search");
     private final JButton retry = new JButton("Retry");
-    private final JLabel status = new JLabel("Loading catalogue...");
+    private final JButton previous = new JButton("Previous");
+    private final JButton next = new JButton("Next");
+    private final JLabel status = new JLabel("Loading courses...");
     private final DefaultListModel<String> listModel = new DefaultListModel<>();
     private final JList<String> results = new JList<>(listModel);
     private final JTextArea details = new JTextArea();
-    private List<CourseData> displayedCourses = List.of();
+    private List<SearchViewModel.Row> displayedCourses = List.of();
+    private Runnable retryAction;
 
-    public CourseBrowser(SearchInputBoundary searchCourses, SearchViewModel viewModel) {
-        this(searchCourses, viewModel, "Demo catalogue — illustrative metadata, not a live UTSG feed");
-    }
-
-    public CourseBrowser(SearchInputBoundary searchCourses, SearchViewModel viewModel, String catalogueLabel) {
+    public CourseBrowser(SearchController controller, SearchViewModel viewModel, String catalogueLabel) {
         super("Rate My Course — UC1 search preview");
-        this.searchCourses = searchCourses;
+        this.controller = controller;
         this.viewModel = viewModel;
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-        setSize(1050, 550);
+        setSize(1100, 600);
         setLocationRelativeTo(null);
         JPanel filters = new JPanel(new FlowLayout(FlowLayout.LEFT));
         addLabelled(filters, "Course code or name", query);
-        addLabelled(filters, "Department / subject", department);
-        addLabelled(filters, "Year", year);
+        addLabelled(filters, "Subject (e.g. CSC)", subject);
+        addLabelled(filters, "Code level", year);
         filters.add(search);
         filters.add(retry);
         retry.setVisible(false);
@@ -67,7 +63,11 @@ public final class CourseBrowser extends JFrame {
         results.getAccessibleContext().setAccessibleName("Matching courses");
         results.addListSelectionListener(event -> {
             if (!event.getValueIsAdjusting()) {
-                showSelection();
+                int index = results.getSelectedIndex();
+                if (index >= 0 && index < displayedCourses.size()) {
+                    details.setText(displayedCourses.get(index).details);
+                    details.setCaretPosition(0);
+                }
             }
         });
         JSplitPane content = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
@@ -77,11 +77,18 @@ public final class CourseBrowser extends JFrame {
         heading.add(new JLabel(catalogueLabel), BorderLayout.NORTH);
         heading.add(filters, BorderLayout.CENTER);
         heading.add(status, BorderLayout.SOUTH);
+        JPanel pages = new JPanel();
+        pages.add(previous);
+        pages.add(next);
         add(heading, BorderLayout.NORTH);
         add(content, BorderLayout.CENTER);
+        add(pages, BorderLayout.SOUTH);
         search.addActionListener(event -> submit());
         query.addActionListener(event -> submit());
-        retry.addActionListener(event -> submit());
+        subject.addActionListener(event -> submit());
+        retry.addActionListener(event -> load(retryAction));
+        previous.addActionListener(event -> page(viewModel.getState().page - 1));
+        next.addActionListener(event -> page(viewModel.getState().page + 1));
         getRootPane().setDefaultButton(search);
         submit();
     }
@@ -94,13 +101,20 @@ public final class CourseBrowser extends JFrame {
     }
 
     private void submit() {
-        String selectedDepartment = department.getSelectedIndex() <= 0 ? "" : (String) department.getSelectedItem();
-        load(new SearchRequest(query.getText(), selectedDepartment, year.getSelectedIndex()));
+        String text = query.getText();
+        String prefix = subject.getText();
+        int level = year.getSelectedIndex();
+        load(() -> controller.search(text, prefix, level));
     }
 
-    private void load(SearchRequest request) {
+    private void page(int page) {
+        load(() -> controller.page(page));
+    }
+
+    private void load(Runnable action) {
+        retryAction = action;
         setBusy(true);
-        status.setText("Loading catalogue...");
+        status.setText("Loading courses... The API may need a minute to wake up.");
         retry.setVisible(false);
         displayedCourses = List.of();
         listModel.clear();
@@ -108,7 +122,7 @@ public final class CourseBrowser extends JFrame {
         new SwingWorker<Void, Void>() {
             @Override
             protected Void doInBackground() {
-                searchCourses.execute(request);
+                action.run();
                 return null;
             }
 
@@ -120,7 +134,7 @@ public final class CourseBrowser extends JFrame {
                 setBusy(false);
                 try {
                     get();
-                    render(viewModel.getResponse());
+                    render(viewModel.getState());
                 }
                 catch (InterruptedException exception) {
                     Thread.currentThread().interrupt();
@@ -133,52 +147,32 @@ public final class CourseBrowser extends JFrame {
         }.execute();
     }
 
-    private void render(SearchResponse response) {
-        if (!response.isSuccess()) {
-            showFailure(response.getError());
-            return;
+    private void render(SearchViewModel.State state) {
+        status.setText(state.status);
+        displayedCourses = state.courses;
+        state.courses.forEach(course -> listModel.addElement(course.label));
+        previous.setEnabled(state.error.isEmpty() && state.page > 1);
+        next.setEnabled(state.hasNext);
+        retry.setVisible(!state.error.isEmpty());
+        if (state.error.isEmpty()) {
+            details.setText("Select a result to inspect its course metadata.");
         }
-        Object selectedDepartment = department.getSelectedItem();
-        department.removeAllItems();
-        department.addItem("All departments");
-        response.getDepartments().forEach(department::addItem);
-        if (response.getDepartments().contains(selectedDepartment)) {
-            department.setSelectedItem(selectedDepartment);
-        }
-        displayedCourses = response.getCourses();
-        for (CourseData course : displayedCourses) {
-            listModel.addElement(course.getCode() + " — " + course.getName());
-        }
-        int count = displayedCourses.size();
-        status.setText(count == 0 ? "No matching courses. Change your search or filters."
-                : count + (count == 1 ? " matching course" : " matching courses"));
-        details.setText("Select a result to inspect its course metadata.");
     }
 
     private void showFailure(String message) {
         status.setText(message);
         retry.setVisible(true);
+        previous.setEnabled(false);
+        next.setEnabled(false);
     }
 
     private void setBusy(boolean busy) {
         search.setEnabled(!busy);
         query.setEnabled(!busy);
-        department.setEnabled(!busy);
+        subject.setEnabled(!busy);
         year.setEnabled(!busy);
         retry.setEnabled(!busy);
-    }
-
-    private void showSelection() {
-        int index = results.getSelectedIndex();
-        if (index >= 0 && index < displayedCourses.size()) {
-            CourseData course = displayedCourses.get(index);
-            details.setText(course.getCode() + " — " + course.getName() + "\n\n"
-                    + course.getDepartment() + " | Year " + course.getYear() + "\n\n"
-                    + course.getDescription()
-                    + (course.getSourceUrl().isEmpty() ? "" : "\nOfficial listing: " + course.getSourceUrl()) + "\n\n"
-                    + "Reviews are not available in this preview.\n"
-                    + "Reviewing, saving, and comparing are not available yet.");
-            details.setCaretPosition(0);
-        }
+        previous.setEnabled(false);
+        next.setEnabled(false);
     }
 }
