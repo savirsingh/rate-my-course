@@ -8,7 +8,10 @@
         <property name="ignorePattern" value="^package.*|^import.*|https?://"/>
     </module>
     <module name="TreeWalker">
-        <module name="AvoidStarImport"/>
+        <module name="AvoidStarImport">
+            <!-- Permit the shared Swing UI examples while checking other wildcard imports. -->
+            <property name="excludes" value="javax.swing"/>
+        </module>
         <module name="UnusedImports"/>
         <module name="NeedBraces"/>
         <module name="EmptyBlock"/>
